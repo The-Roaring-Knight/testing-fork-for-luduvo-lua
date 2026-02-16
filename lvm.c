@@ -1820,21 +1820,32 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         goto l_tforcall;
       }
       vmcase(OP_TFORCALL) {
-       l_tforcall: {
-        StkId ra = RA(i);
-        /* 'ra' has the iterator function, 'ra + 1' has the state,
-           'ra + 2' has the control variable, and 'ra + 3' has the
-           to-be-closed variable. The call will use the stack after
-           these values (starting at 'ra + 4')
-        */
-        /* push function, state, and control variable */
-        memcpy(ra + 4, ra, 3 * sizeof(*ra));
-        L->top.p = ra + 4 + 3;
-        ProtectNT(luaD_call(L, ra + 4, GETARG_C(i)));  /* do the call */
-        updatestack(ci);  /* stack may have changed */
-        i = *(pc++);  /* go to next instruction */
-        lua_assert(GET_OPCODE(i) == OP_TFORLOOP && ra == RA(i));
-        goto l_tforloop;
+      l_tforcall: {
+          StkId ra = RA(i);
+          TValue *v_ra = s2v(ra);
+
+          if (ttistable(v_ra)) { /* shortcut so you can directly do: for key, value in table do */              
+              Table *h = hvalue(v_ra);
+              /* prepare key for luaH_next */
+              setobj2s(L, ra + 4, ra + 2);
+              /* calls luaH_next which reads the key at ra + 4 */
+              if (luaH_next(L, h, ra + 4) == 0) { /* if this returns 0 it means it finished */
+                  setnilvalue(s2v(ra + 4));
+              }
+          }
+          else if (!ttisfunction(v_ra)) { /* executes if its not a table or a function for a more understandable error like in luau */
+              const char* type_name = lua_typename(L, ttype(v_ra));
+              luaG_runerror(L, "attempt to iterate over a %s value", type_name);
+          }
+          else { /* standard behavior where ra is something like pairs */
+              memcpy(ra + 4, ra, 3 * sizeof(*ra));
+              L->top.p = ra + 4 + 3;
+              ProtectNT(luaD_call(L, ra + 4, GETARG_C(i)));  /* do the call */
+          }
+          updatestack(ci);  /* stack may have changed */
+          i = *(pc++);  /* go to next instruction */
+          lua_assert(GET_OPCODE(i) == OP_TFORLOOP && ra == RA(i));
+          goto l_tforloop;
       }}
       vmcase(OP_TFORLOOP) {
        l_tforloop: {
